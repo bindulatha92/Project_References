@@ -1,0 +1,1238 @@
+---
+title: "5110_Final_Project"
+author: "Bindu Latha Banisetti"
+date: "4/25/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(modelr)
+library(gridExtra)
+library(randomForest)
+library(glmnet)
+library(caret)
+library(broom)
+```
+
+
+```{r}
+dir1 <- file.path("winequality-red.csv")
+dir2 <- file.path("winequality-white.csv")
+red_wine_df <- read.csv(dir1, header = TRUE, sep = ";")
+white_wine_df <- read.csv(dir2, header = TRUE, sep = ";")
+
+which(is.na(red_wine_df))
+which(is.na(white_wine_df))
+```
+
+
+# Stepwise Model Selection for red wine
+
+```{r}
+#Partition of data
+red_wine_std <- data.frame(scale(red_wine_df[1:11]))
+red_wine_std$quality <- red_wine_df$quality
+set.seed(10)
+partition_rw <- resample_partition(red_wine_std,
+                                p=c(train=0.5,
+                                    valid=0.25,
+                                    test=0.25))
+```
+
+
+```{r}
+#Function to calculate the RMSE of the predictors
+step <- function(response, predictors, candidates, partition)
+{
+  rhs <- paste0(paste0(predictors, collapse="+"), "+", candidates)
+  formulas <- lapply(paste0(response, "~", rhs), as.formula)
+  rmses <- sapply(formulas,
+                  function(fm) rmse(lm(fm, data=partition$train),
+                                    data=partition$valid))
+  names(rmses) <- candidates
+  attr(rmses, "best") <- rmses[which.min(rmses)]
+  rmses
+}
+```
+
+```{r}
+model_rw <- NULL
+
+preds <- "1"
+cands <- c("fixed.acidity","volatile.acidity","citric.acid","residual.sugar",
+           "chlorides","free.sulfur.dioxide","total.sulfur.dioxide","density",
+           "pH","sulphates","alcohol")
+s1 <- step("quality", preds, cands, partition_rw)
+
+model_rw <- c(model_rw, attr(s1, "best"))
+s1
+```
+
+```{r}
+preds <- "alcohol"
+cands <- c("fixed.acidity","volatile.acidity","citric.acid","residual.sugar",
+           "chlorides","free.sulfur.dioxide","total.sulfur.dioxide","density",
+           "pH","sulphates")
+s1 <- step("quality", preds, cands, partition_rw)
+
+model_rw <- c(model_rw, attr(s1, "best"))
+s1
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity")
+cands <- c("fixed.acidity","citric.acid","residual.sugar",
+           "chlorides","free.sulfur.dioxide","total.sulfur.dioxide","density",
+           "pH","sulphates")
+s1 <- step("quality", preds, cands, partition_rw)
+
+model_rw <- c(model_rw, attr(s1, "best"))
+s1
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","sulphates")
+cands <- c("fixed.acidity","citric.acid","residual.sugar",
+           "chlorides","free.sulfur.dioxide","total.sulfur.dioxide","density",
+           "pH")
+s1 <- step("quality", preds, cands, partition_rw)
+
+model_rw <- c(model_rw, attr(s1, "best"))
+s1
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","sulphates","total.sulfur.dioxide")
+cands <- c("fixed.acidity","citric.acid","residual.sugar",
+           "chlorides","free.sulfur.dioxide","density",
+           "pH")
+s1 <- step("quality", preds, cands, partition_rw)
+
+model_rw <- c(model_rw, attr(s1, "best"))
+s1
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","sulphates","total.sulfur.dioxide","chlorides")
+cands <- c("fixed.acidity","citric.acid","residual.sugar",
+           "free.sulfur.dioxide","density",
+           "pH")
+s1 <- step("quality", preds, cands, partition_rw)
+
+model_rw <- c(model_rw, attr(s1, "best"))
+s1
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","sulphates","total.sulfur.dioxide","chlorides","pH")
+cands <- c("fixed.acidity","citric.acid","residual.sugar",
+           "free.sulfur.dioxide","density")
+s1 <- step("quality", preds, cands, partition_rw)
+
+model_rw <- c(model_rw, attr(s1, "best"))
+s1
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","sulphates","total.sulfur.dioxide",
+           "chlorides","pH","citric.acid")
+cands <- c("fixed.acidity","residual.sugar",
+           "free.sulfur.dioxide","density")
+s1 <- step("quality", preds, cands, partition_rw)
+
+model_rw <- c(model_rw, attr(s1, "best"))
+s1
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","sulphates","total.sulfur.dioxide",
+           "chlorides","pH","citric.acid", "fixed.acidity")
+cands <- c("residual.sugar", "free.sulfur.dioxide","density")
+s1 <- step("quality", preds, cands, partition_rw)
+
+model_rw <- c(model_rw, attr(s1, "best"))
+s1
+```
+
+
+**Model stopped improving at:**
+
+- fit = quality ~ alcohol + volatile acidity + sulphates + total sulfur dioxide + chlorides + pH + citric acid + fixed acidity
+
+**Visualizing how adding each variable affects the RMSE**
+
+```{r fig.width= 10, fig.height= 5}
+step_model <- tibble(index=seq_along(model_rw),
+                     variable=factor(names(model_rw), levels=names(model_rw)),
+                     RMSE=model_rw)
+
+ggplot(step_model, aes(y=RMSE)) +
+  geom_point(aes(x=variable, color = variable), size =3) +
+  geom_line(aes(x=index)) +
+  theme_minimal()+
+  labs(title = "Stepwise model selection",
+               subtitle = "(Red Wine)",
+               x = "Predictors",
+               y = "RMSE")+
+        theme(plot.title = element_text(hjust = 0.5,
+                                        color = "darkgreen", 
+                                        face = "bold"),
+              plot.subtitle = element_text(hjust = 0.5,
+                                        color = "darkgreen", 
+                                        face = "bold"),
+              axis.title = element_text(color = "blue",
+                                        face = "bold",
+                                        size = 12),
+              axis.text.x = element_text(hjust = 0.5,
+                                        vjust = 0.5,
+                                        color = "brown2",
+                                        face = "bold",
+                                        size = 9),
+              axis.text.y = element_text(color = "brown2",
+                                        face = "bold",
+                                        size = 10),
+              panel.border = element_rect(colour = "grey45",
+                                        fill=NA, size=1),
+              legend.position = "none")
+```
+
+## visualizing how each variable(including the predictors) affects the RMSE for Red wine
+
+```{r}
+temp_model_rw <- model_rw
+preds <- c("alcohol","volatile.acidity","sulphates","total.sulfur.dioxide",
+           "chlorides","pH","citric.acid", "fixed.acidity", "free.sulfur.dioxide")
+cands <- c("residual.sugar","density")
+s1 <- step("quality", preds, cands, partition_rw)
+
+temp_model_rw <- c(temp_model_rw, attr(s1, "best"))
+s1
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","sulphates","total.sulfur.dioxide",
+           "chlorides","pH","citric.acid", "fixed.acidity", "free.sulfur.dioxide",
+           "density")
+cands <- c("residual.sugar")
+s1 <- step("quality", preds, cands, partition_rw)
+
+temp_model_rw <- c(temp_model_rw, attr(s1, "best"))
+s1
+```
+
+```{r fig.width= 11, fig.height= 6}
+#Representation of RMSE for all the variables
+step_model_temp <- tibble(index=seq_along(temp_model_rw),
+                     variable=factor(names(temp_model_rw), levels=names(temp_model_rw)),
+                     RMSE=temp_model_rw)
+
+ggplot(step_model_temp, aes(y=RMSE)) +
+  geom_point(aes(x=variable, color = variable), size = 2) +
+  geom_line(aes(x=index)) +
+  theme_minimal()+
+  labs(title = "Stepwise model selection",
+               subtitle = "(Red Wine)",
+               x = "Predictors",
+               y = "RMSE")+
+        theme(plot.title = element_text(hjust = 0.5,
+                                        color = "darkgreen", 
+                                        face = "bold"),
+              plot.subtitle = element_text(hjust = 0.5,
+                                        color = "darkgreen", 
+                                        face = "bold"),
+              axis.title = element_text(color = "blue",
+                                        face = "bold",
+                                        size = 12),
+              axis.text.x = element_text(hjust = 0.5,
+                                        vjust = 0.5,
+                                        color = "brown2",
+                                        face = "bold",
+                                        size = 9),
+              axis.text.y = element_text(color = "brown2",
+                                        face = "bold",
+                                        size = 10),
+              panel.border = element_rect(colour = "grey45",
+                                        fill=NA, size=1),
+              legend.position = "none")
+```
+
+**Consider the following fits and extract the best fit model:**
+
+- fit1 <- quality ~ alcohol + volatile acidity + sulphates + total sulfur dioxide + chlorides + pH 
+- fit2 <- quality ~ alcohol + volatile acidity + sulphates + total sulfur dioxide + chlorides + pH + citric acid
+- fit3 <- quality ~ alcohol + volatile acidity + sulphates + total sulfur dioxide + chlorides + pH + citric acid + fixed acidity
+
+# Cross Validation
+
+```{r}
+set.seed(2020)
+#partition_rw_train <- red_wine_std[-partition_rw$test$idx,]
+#redwine_cv <- crossv_kfold(partition_rw_train, 5)
+#redwine_cv
+
+redwine_cv <- crossv_kfold(red_wine_std, 5)
+redwine_cv
+```
+
+```{r}
+
+#Calculating RMSE for each fold of data
+cv_rw <- redwine_cv %>%
+  mutate(fit = purrr::map(train,
+                   ~ lm(quality ~ alcohol + volatile.acidity + sulphates + 
+                          total.sulfur.dioxide + chlorides + pH, data = .)),
+         rmse = purrr::map2_dbl(fit, test, ~ rmse(.x, .y)))
+
+cv_rw
+```
+
+```{r}
+#Average of RMSEs
+mean(cv_rw$rmse)
+```
+
+## Comparing models using CV
+
+```{r}
+do_redwine_cv <- function(formula) {
+  redwine_cv %>%
+    mutate(fit = map(train,
+                     ~ lm(formula, data = .)),
+         rmse = map2_dbl(fit, test, ~ rmse(.x, .y)),
+         rsq = map2_dbl(fit,test,~rsquare(.x,.y)),
+         mae = map2_dbl(fit,test,~mae(.x,.y))) %>%
+    summarize(cv_rmse = mean(rmse), cv_rsq = mean(rsq),
+              cv_mae = mean(mae)) %>%
+    return(c(cv_rmse, cv_rsq, cv_mae))
+}
+```
+
+**Calling the function**
+
+```{r}
+fit1_rmse <- do_redwine_cv(quality ~ alcohol + volatile.acidity + sulphates +
+                total.sulfur.dioxide + chlorides + pH )
+
+fit2_rmse <- do_redwine_cv(quality ~ alcohol + volatile.acidity + sulphates + 
+                total.sulfur.dioxide + chlorides + pH + citric.acid)
+
+fit3_rmse <- do_redwine_cv(quality ~ alcohol + volatile.acidity + sulphates + 
+                total.sulfur.dioxide + chlorides + pH + citric.acid + fixed.acidity)
+
+fit1_rmse
+fit2_rmse
+fit3_rmse
+```
+
+
+```{r}
+#Goodness of fit
+
+gof_fs_rw <- lm( quality ~ alcohol + volatile.acidity + sulphates +
+                total.sulfur.dioxide + chlorides + pH , red_wine_df)
+glance(gof_fs_rw)
+summary(gof_fs_rw)
+```
+
+**Best fit model:**
+
+- quality ~ alcohol + volatile.acidity + sulphates + total.sulfur.dioxide + chlorides + pH 
+
+# Stepwise Model Selection for white wine
+
+```{r}
+#Partition of data
+white_wine_std <- data.frame(scale(white_wine_df[1:11]))
+white_wine_std$quality <- white_wine_df$quality
+set.seed(10)
+partition_ww <- resample_partition(white_wine_std,
+                                p=c(train=0.5,
+                                    valid=0.25,
+                                    test=0.25))
+```
+
+```{r}
+model_ww <- NULL
+
+preds <- "1"
+cands <- c("fixed.acidity","volatile.acidity","citric.acid","residual.sugar",
+           "chlorides","free.sulfur.dioxide","total.sulfur.dioxide","density",
+           "pH","sulphates","alcohol")
+s2 <- step("quality", preds, cands, partition_ww)
+
+model_ww <- c(model_ww, attr(s2, "best"))
+s2
+```
+
+```{r}
+preds <- "alcohol"
+cands <- c("fixed.acidity","volatile.acidity","citric.acid","residual.sugar",
+           "chlorides","free.sulfur.dioxide","total.sulfur.dioxide","density",
+           "pH","sulphates")
+s2 <- step("quality", preds, cands, partition_ww)
+
+model_ww <- c(model_ww, attr(s2, "best"))
+s2
+
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity")
+cands <- c("fixed.acidity","citric.acid","residual.sugar",
+           "chlorides","free.sulfur.dioxide","total.sulfur.dioxide","density",
+           "pH","sulphates")
+s2 <- step("quality", preds, cands, partition_ww)
+
+model_ww <- c(model_ww, attr(s2, "best"))
+s2
+
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","residual.sugar")
+cands <- c("fixed.acidity","citric.acid",
+           "chlorides","free.sulfur.dioxide","total.sulfur.dioxide","density",
+           "pH","sulphates")
+s2 <- step("quality", preds, cands, partition_ww)
+
+model_ww <- c(model_ww, attr(s2, "best"))
+s2
+
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","residual.sugar","fixed.acidity")
+cands <- c("citric.acid","chlorides","free.sulfur.dioxide",
+           "total.sulfur.dioxide","density","pH","sulphates")
+s2 <- step("quality", preds, cands, partition_ww)
+
+model_ww <- c(model_ww, attr(s2, "best"))
+s2
+
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","residual.sugar","fixed.acidity",
+           "free.sulfur.dioxide")
+cands <- c("citric.acid","chlorides",
+           "total.sulfur.dioxide","density","pH","sulphates")
+s2 <- step("quality", preds, cands, partition_ww)
+
+model_ww <- c(model_ww, attr(s2, "best"))
+s2
+
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","residual.sugar","fixed.acidity",
+           "free.sulfur.dioxide","sulphates")
+cands <- c("citric.acid","chlorides",
+           "total.sulfur.dioxide","density","pH")
+s2 <- step("quality", preds, cands, partition_ww)
+
+model_ww <- c(model_ww, attr(s2, "best"))
+s2
+
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","residual.sugar","fixed.acidity",
+           "free.sulfur.dioxide","sulphates", "total.sulfur.dioxide")
+cands <- c("citric.acid","chlorides",
+           "density","pH")
+s2 <- step("quality", preds, cands, partition_ww)
+
+model_ww <- c(model_ww, attr(s2, "best"))
+s2
+
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","residual.sugar","fixed.acidity",
+           "free.sulfur.dioxide","sulphates", "total.sulfur.dioxide","pH")
+cands <- c("citric.acid","chlorides","density")
+s2 <- step("quality", preds, cands, partition_ww)
+
+model_ww <- c(model_ww, attr(s2, "best"))
+s2
+
+```
+
+```{r}
+preds <- c("alcohol","volatile.acidity","residual.sugar","fixed.acidity",
+           "free.sulfur.dioxide","sulphates", "total.sulfur.dioxide",
+           "pH","chlorides")
+cands <- c("citric.acid","density")
+s2 <- step("quality", preds, cands, partition_ww)
+
+model_ww <- c(model_ww, attr(s2, "best"))
+s2
+
+```
+
+**Model stopped improving at:**
+
+- fit = quality ~ alcohol + volatile acidity + residual sugar + fixed acidity + free sulfur dioxide + sulphates + total sulfur dioxide + pH + chlorides 
+
+Visualizing how adding each variable affects the RMSE.
+
+```{r fig.width= 10, fig.height= 5}
+step_model_ww <- tibble(index=seq_along(model_ww),
+                     variable=factor(names(model_ww), levels=names(model_ww)),
+                     RMSE=model_ww)
+
+ggplot(step_model_ww, aes(y=RMSE)) +
+  geom_point(aes(x=variable, color = variable), size = 2) +
+  geom_line(aes(x=index)) +
+  theme_minimal()+
+  labs(title = "Stepwise model selection",
+               subtitle = "(White Wine)",
+               x = "Predictors",
+               y = "RMSE")+
+        theme(plot.title = element_text(hjust = 0.5,
+                                        color = "darkgreen", 
+                                        face = "bold"),
+              plot.subtitle = element_text(hjust = 0.5,
+                                        color = "darkgreen", 
+                                        face = "bold"),
+              axis.title = element_text(color = "blue",
+                                        face = "bold",
+                                        size = 12),
+              axis.text.x = element_text(hjust = 0.5,
+                                        vjust = 0.5,
+                                        color = "brown2",
+                                        face = "bold",
+                                        size = 9),
+              axis.text.y = element_text(color = "brown2",
+                                        face = "bold",
+                                        size = 10),
+              panel.border = element_rect(colour = "grey45",
+                                        fill=NA, size=1),
+              legend.position = "none")
+```
+
+
+## visualizing how each variable(including the predictors) affects the RMSE for Red wine
+
+```{r}
+temp_model_ww <- model_ww
+preds <- c("alcohol","volatile.acidity","residual.sugar","fixed.acidity",
+           "free.sulfur.dioxide","sulphates", "total.sulfur.dioxide",
+           "pH","chlorides", "citric.acid")
+cands <- c("density")
+s2 <- step("quality", preds, cands, partition_ww)
+
+temp_model_ww <- c(temp_model_ww, attr(s2, "best"))
+s2
+```
+
+```{r fig.width= 10, fig.height= 5}
+step_model_ww_temp <- tibble(index=seq_along(temp_model_ww),
+                     variable=factor(names(temp_model_ww), levels=names(temp_model_ww)),
+                     RMSE=temp_model_ww)
+
+ggplot(step_model_ww_temp, aes(y=RMSE)) +
+  geom_point(aes(x=variable, color = variable), size = 2) +
+  geom_line(aes(x=index)) +
+  theme_minimal()+
+  labs(title = "Stepwise model selection",
+               subtitle = "(White Wine)",
+               x = "Predictors",
+               y = "RMSE")+
+        theme(plot.title = element_text(hjust = 0.5,
+                                        color = "darkgreen", 
+                                        face = "bold"),
+              plot.subtitle = element_text(hjust = 0.5,
+                                        color = "darkgreen", 
+                                        face = "bold"),
+              axis.title = element_text(color = "blue",
+                                        face = "bold",
+                                        size = 12),
+              axis.text.x = element_text(hjust = 0.5,
+                                        vjust = 0.5,
+                                        color = "brown2",
+                                        face = "bold",
+                                        size = 9),
+              axis.text.y = element_text(color = "brown2",
+                                        face = "bold",
+                                        size = 10),
+              panel.border = element_rect(colour = "grey45",
+                                        fill=NA, size=1),
+              legend.position = "none")
+```
+
+
+**Consider the following fits and extract the best fit model:**
+
+- fit1 <- quality ~ alcohol + volatile.acidity + residual.sugar + fixed.acidity + free.sulfur.dioxide + sulphates + total.sulfur.dioxide + pH
+- fit2 <- quality ~ alcohol + volatile.acidity + residual.sugar + fixed.acidity + free.sulfur.dioxide + sulphates + total.sulfur.dioxide + pH + chlorides
+
+# Cross Validation
+
+```{r}
+set.seed(2020)
+#partition_ww_train <- white_wine_std[-partition_ww$test$idx,]
+#whitewine_cv <- crossv_kfold(partition_ww_train, 5)
+#whitewine_cv
+
+whitewine_cv <- crossv_kfold(white_wine_std, 5)
+whitewine_cv
+```
+
+```{r}
+
+#Calculating RMSE for each fold of data
+cv_rw <- whitewine_cv %>%
+  mutate(fit = purrr::map(train,
+                   ~ lm(quality ~ alcohol + volatile.acidity + residual.sugar + 
+                             fixed.acidity + free.sulfur.dioxide + 
+                             sulphates + total.sulfur.dioxide + pH, data = .)),
+         rmse = purrr::map2_dbl(fit, test, ~ rmse(.x, .y)))
+
+cv_rw
+```
+
+```{r}
+#Average of RMSEs
+mean(cv_rw$rmse)
+```
+
+## Comparing models using CV
+
+```{r}
+do_whitewine_cv <- function(formula) {
+  whitewine_cv %>%
+    mutate(fit = map(train,
+                     ~ lm(formula, data = .)),
+         rmse = map2_dbl(fit, test, ~ rmse(.x, .y)),
+         rsq = map2_dbl(fit,test, ~rsquare(.x,.y)),
+         mae = map2_dbl(fit,test,~mae(.x,.y))) %>%
+    summarize(cv_rmse = mean(rmse), cv_rsq = mean(rsq),
+              cv_mae = mean(mae)) %>%
+    return(c(cv_rmse, cv_rsq, cv_mae))
+}
+```
+
+
+**Calling the function**
+
+```{r}
+
+fit1_rmse_ww <- do_whitewine_cv(quality ~ alcohol + volatile.acidity + residual.sugar + 
+                             fixed.acidity + free.sulfur.dioxide + 
+                             sulphates + total.sulfur.dioxide + pH)
+
+fit2_rmse_ww <- do_whitewine_cv(quality ~ alcohol + volatile.acidity + residual.sugar + 
+                             fixed.acidity + free.sulfur.dioxide + 
+                             sulphates + total.sulfur.dioxide + pH + chlorides)
+
+fit1_rmse_ww
+fit2_rmse_ww
+```
+
+
+**Best fit Model**
+
+- quality ~ alcohol + volatile.acidity + residual.sugar + fixed.acidity + free.sulfur.dioxide + sulphates + total.sulfur.dioxide + pH
+
+```{r}
+fit_rw <- lm(quality ~ alcohol + volatile.acidity + sulphates + total.sulfur.dioxide + chlorides + pH, red_wine_std )
+
+summary(fit_rw)
+
+fit_ww <- lm(quality ~ alcohol + volatile.acidity + residual.sugar + fixed.acidity + free.sulfur.dioxide + sulphates + total.sulfur.dioxide + pH, white_wine_std)
+
+summary(fit_ww)
+```
+
+```{r}
+#Data partition
+
+#Redwine
+set.seed(1)
+train <- createDataPartition(red_wine_std$quality, p=0.6, list=FALSE)
+
+table(red_wine_std$quality[train])
+
+reddf_train <- red_wine_std[as.integer(train),]
+reddf_test <- red_wine_std[-as.integer(train),]
+
+#Whitewine
+set.seed(1)
+train_w <- createDataPartition(white_wine_std$quality, p=0.6, list=FALSE)
+
+table(white_wine_std$quality[train_w])
+
+whitedf_train <- white_wine_std[as.integer(train_w),]
+whitedf_test <- white_wine_std[-as.integer(train_w),]
+```
+
+
+## Random Forest Regression
+
+```{r}
+
+#Red wine
+fit_rw_rf <- randomForest(quality ~ alcohol + volatile.acidity +
+                            sulphates + total.sulfur.dioxide + 
+                            chlorides + pH, reddf_train, 
+                          mtry = 3,
+                          importance = TRUE, 
+                          na.action = na.omit)
+summary(fit_rw_rf)
+
+fit_rw_rf_prediction<-predict(fit_rw_rf,newdata=reddf_test)
+rf_rw_results<-as.data.frame(cbind(fit_rw_rf_prediction,reddf_test$quality))
+colnames(rf_rw_results)<-c("prediction","real")
+
+```
+
+```{r}
+#White Wine - Random forest regression
+fit_ww_rf <- randomForest(quality ~ alcohol + volatile.acidity + 
+                            residual.sugar + fixed.acidity + 
+                            free.sulfur.dioxide + sulphates +
+                            total.sulfur.dioxide + pH, whitedf_train, 
+                          mtry = 3,
+                          importance = TRUE, 
+                          na.action = na.omit)
+fit_ww_rf
+
+fit_ww_rf_prediction<-predict(fit_ww_rf,newdata=whitedf_test)
+rf_ww_results<-as.data.frame(cbind(fit_ww_rf_prediction,whitedf_test$quality))
+colnames(rf_ww_results)<-c("prediction","real")
+```
+
+## Ridge Regression
+
+
+```{r}
+#Ridge regression for red wine
+
+
+ctrl <- trainControl(method="repeatedcv", number=10, repeats=10)
+
+grd <- expand.grid(lambda=exp(seq(from=-7, to=-2, length.out=20)),
+                   alpha=0)
+
+set.seed(1)
+fit_rw_ridge <- train(quality ~ alcohol + volatile.acidity +
+                            sulphates + total.sulfur.dioxide + 
+                            chlorides + pH, data=reddf_train,
+              method="glmnet",
+              preProcess=c("center", "scale"),
+              trControl=ctrl, tuneGrid=grd)
+fit_rw_ridge
+```
+
+```{r}
+#Ridge regression for white wine
+
+
+ctrl <- trainControl(method="repeatedcv", number=10, repeats=10)
+
+grd <- expand.grid(lambda=exp(seq(from=-7, to=-2, length.out=20)),
+                   alpha=0)
+
+set.seed(1)
+fit_ww_ridge <- train(quality ~ alcohol + volatile.acidity + 
+                            residual.sugar + fixed.acidity + 
+                            free.sulfur.dioxide + sulphates +
+                            total.sulfur.dioxide + pH, data=whitedf_train,
+              method="glmnet",
+              preProcess=c("center", "scale"),
+              trControl=ctrl, tuneGrid=grd)
+fit_ww_ridge
+```
+
+## Lasso Regression
+
+## Lasso Regression
+
+```{r}
+#Lasso regression for red wine
+actual_quality_rw<-red_wine_df$quality
+response_rw<-red_wine_df$quality
+predictors_rw<-data.matrix(red_wine_df[,c("fixed.acidity","volatile.acidity","citric.acid",
+                          "residual.sugar","chlorides","free.sulfur.dioxide",
+                          "total.sulfur.dioxide","density","pH","sulphates",
+                          "alcohol")])
+
+
+red_ls_model<-glmnet(predictors_rw,response_rw,alpha=1)
+
+coef_rw<-plot(red_ls_model,xvar="lambda",label=TRUE)
+# Using k-fold cv to get best optimal lambda value
+red_cv_ls_model<-cv.glmnet(predictors_rw,response_rw,alpha=1)
+
+#produce plot of MSE values for each lambda 
+plot(red_cv_ls_model)
+
+#find optimal lambda value that minimizes the MSE
+best_lambda_rw<-red_cv_ls_model$lambda.min
+best_lambda_rw
+
+best_model_ls_rw<-glmnet(predictors_rw,response_rw,alpha=1,lambda=best_lambda_rw)
+coef(best_model_ls_rw)
+
+# To find the rsquare of our best model
+
+#To obtain predicted values
+predicted_quality_rw<-predict(best_model_ls_rw,s=best_lambda_rw,newx=predictors_rw)
+
+#Finding the SST and SSE and Rsquare
+sst_rw<-sum((actual_quality_rw-mean(actual_quality_rw))^2)
+sse_rw<-sum((actual_quality_rw-predicted_quality_rw)^2)
+rsq_ls_rw<-1-(sse_rw/sst_rw)
+rsq_ls_rw
+
+#Finding the RMSE and MAE
+n_rw<-nrow(red_wine_df)
+rmse_ls_rw<-sqrt(sum((actual_quality_rw-predicted_quality_rw)^2)/n_rw)
+rmse_ls_rw
+mae_ls_rw<-sum(abs(actual_quality_rw-predicted_quality_rw))/n_rw
+mae_ls_rw
+
+view(data.frame(RMSE=rmse_ls_rw,MAE=mae_ls_rw,R_Square=rsq_ls_rw))
+
+```
+
+```{r}
+# Lasso Regression on White wine 
+response_ww<-white_wine_df$quality
+actual_quality_ww<-white_wine_df$quality
+predictors_ww<-data.matrix(white_wine_df[,c("fixed.acidity","volatile.acidity","citric.acid",
+                            "residual.sugar","chlorides","free.sulfur.dioxide",
+                            "total.sulfur.dioxide","density","pH","sulphates",
+                            "alcohol")])
+
+
+white_ls_model<-glmnet(predictors_ww,response_ww,alpha=1)
+
+coef_ww<-plot(white_ls_model,xvar="lambda",label=TRUE)
+# Using k-fold cv to get best optimal lambda value
+library("glmnet")
+white_cv_ls_model<-cv.glmnet(predictors_ww,response_ww,alpha=1)
+
+plot(white_cv_ls_model)
+
+#find optimal lambda value that minimizes the MSE
+best_lambda_ww<-white_cv_ls_model$lambda.min
+best_lambda_ww
+
+best_model_ls_ww<-glmnet(predictors_ww,response_ww,alpha=1,lambda=best_lambda_ww)
+coef(best_model_ls_ww)
+
+# To find the rsquare of our best model
+
+#To obtain predicted values
+predicted_quality_ww<-predict(best_model_ls_ww,s=best_lambda_ww,newx=predictors_ww)
+
+#find the SST and SSE
+sst_ww<-sum((actual_quality_ww-mean(actual_quality_ww))^2)
+sse_ww<-sum((actual_quality_ww-predicted_quality_ww)^2)
+
+rsq_ls_ww<-1-(sse_ww/sst_ww)
+rsq_ls_ww
+
+n_ww<-nrow(white_wine_df)
+rmse_ls_ww<-sqrt(sum((actual_quality_ww-predicted_quality_ww)^2)/n_ww)
+rmse_ls_ww
+
+mae_ls_ww<-sum(abs(actual_quality_ww-predicted_quality_ww))/n_ww
+mae_ls_ww
+
+ls_results_df <- tibble(wine_type = c("Red Wine","White wine"),
+                            rmse = c(rmse_ls_rw,rmse_ls_ww),
+                            mae = c(mae_ls_rw,rmse_ls_rw),
+                            rsquare = c(rsq_ls_rw,rsq_ls_ww))
+view(ls_results_df)
+
+plot(red_ls_model,xvar="lambda",label=TRUE)
+plot(white_ls_model,xvar="lambda",label=TRUE)
+#grid.arrange(coef_rw,coef_ww,nrow=1)
+
+```
+
+```{r}
+fit_fs_rmse_rw<-as.numeric(fit1_rmse["cv_rmse"])
+fit_fs_rsq_rw<-as.numeric(fit1_rmse["cv_rsq"])
+fit_fs_rmse_ww<-as.numeric(fit1_rmse_ww["cv_rmse"])
+fit_fs_rsq_ww<-as.numeric(fit1_rmse_ww["cv_rsq"])
+fit_fs_mae_rw<-as.numeric(fit1_rmse["cv_mae"])
+fit_fs_mae_ww<-as.numeric(fit1_rmse_ww["cv_mae"])
+
+fit_rd_rmse_rw<-rmse(fit_rw_ridge,reddf_test)
+fit_rd_rsq_rw<-rsquare(fit_rw_ridge,reddf_test)
+fit_rd_rmse_ww<-rmse(fit_ww_ridge,whitedf_test)
+fit_rd_rsq_ww<-rsquare(fit_ww_ridge,whitedf_test)
+fit_rd_mae_rw<-mae(fit_rw_ridge,reddf_test)
+fit_rd_mae_ww<-mae(fit_ww_ridge,whitedf_test)
+
+fit_ls_rmse_rw<-rmse_ls_rw
+fit_ls_rsq_rw<-rsq_ls_rw
+fit_ls_rmse_ww<-rmse_ls_ww
+fit_ls_rsq_ww<-rsq_ls_ww
+fit_ls_mae_rw<-mae_ls_rw
+fit_ls_mae_ww<-mae_ls_ww
+
+fit_rf_rmse_rw<-rmse(fit_rw_rf,reddf_test)
+fit_rf_rsq_rw<- rsquare(fit_rw_rf,reddf_test)
+fit_rf_rmse_ww<-rmse(fit_ww_rf,whitedf_test)
+fit_rf_rsq_ww<- rsquare(fit_ww_rf,whitedf_test)
+fit_rf_mae_rw<-mae(fit_rw_rf,reddf_test)
+fit_rf_mae_ww<-mae(fit_ww_rf,whitedf_test)
+```
+
+```{r}
+fs_results_df <- tibble(wine_type = c("Red Wine","White wine"),
+                            rmse = c(fit_fs_rmse_rw,fit_fs_rmse_ww), 
+                            mae = c(fit_fs_mae_rw,fit_fs_mae_ww),
+                            rsquare = c(fit_fs_rsq_rw,fit_fs_rsq_ww))
+view(fs_results_df)
+
+
+rd_results_df <- tibble(wine_type = c("Red Wine","White wine"),
+                            rmse = c(fit_rd_rmse_rw,fit_rd_rmse_ww), 
+                            mae = c(fit_rd_mae_rw,fit_rd_mae_ww),
+                            rsquare = c(fit_rd_rsq_rw,fit_rd_rsq_ww))
+view(rd_results_df)
+
+ls_results_df <- tibble(wine_type = c("Red Wine","White wine"),
+                            rmse = c(fit_ls_rmse_rw,fit_ls_rmse_ww), 
+                            mae = c(fit_ls_mae_rw,fit_ls_mae_ww),
+                            rsquare = c(fit_ls_rsq_rw,fit_ls_rsq_ww))
+view(ls_results_df)
+
+
+rf_results_df <- tibble(wine_type = c("Red Wine","White wine"),
+                            rmse = c(fit_rf_rmse_rw,fit_rf_rmse_ww), 
+                            mae = c(fit_rf_mae_rw,fit_rf_mae_ww),
+                            rsquare = c(fit_rf_rsq_rw,fit_rf_rsq_ww))
+view(rf_results_df)
+```
+
+
+
+```{r}
+
+rmse_of_plots_rw<-data.frame(rmse_value=c(fit_fs_rmse_rw,fit_rd_rmse_rw,fit_ls_rmse_rw,fit_rf_rmse_rw),model=c("Forward","Ridge","Lasso","RandomF"))
+rmse_of_plots_ww<-data.frame(rmse_value=c(fit_fs_rmse_ww,fit_rd_rmse_ww,fit_ls_rmse_ww,fit_rf_rmse_ww),model=c("Forward","Ridge","Lasso","RandomF"))
+
+
+rsq_of_plots_rw<-data.frame(rsq_value=c(fit_fs_rsq_rw,fit_rd_rsq_rw,fit_ls_rsq_rw,fit_rf_rsq_rw),model=c("Forward","Ridge","Lasso","RandomF"))
+rsq_of_plots_ww<-data.frame(rsq_value=c(fit_fs_rsq_ww,fit_rd_rsq_ww,fit_ls_rsq_ww,fit_rf_rsq_ww),model=c("Forward","Ridge","Lasso","RandomF"))
+
+mae_of_plots_rw<-data.frame(mae_value=c(fit_fs_mae_rw,fit_rd_mae_rw,fit_ls_mae_rw,fit_rf_mae_rw),model=c("Forward","Ridge","Lasso","RandomF"))
+mae_of_plots_ww<-data.frame(mae_value=c(fit_fs_mae_ww,fit_rd_mae_ww,fit_ls_mae_ww,fit_rf_mae_ww),model=c("Forward","Ridge","Lasso","RandomF"))
+
+rmse_plot_rw<-ggplot(data=rmse_of_plots_rw)+
+  geom_point(aes(x=model,y=rmse_value,color=model),size=3)+
+  theme_minimal()+
+  labs(x="Model",
+       y="RMSE",
+       title="RMSE of each model",
+       subtitle="(Red wine)")+
+   theme(plot.title = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                plot.subtitle = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                axis.title = element_text(color = "blue",
+                                          face = "bold",
+                                          size = 12),
+                axis.text.x = element_text(hjust = 0.5,
+                                          vjust = 0.5,
+                                          color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                axis.text.y = element_text(color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                panel.border = element_rect(colour = "grey45",
+                                          fill=NA, size=1),
+         legend.position = "none")
+
+rmse_plot_ww<-ggplot(data=rmse_of_plots_ww)+
+  geom_point(aes(x=model,y=rmse_value,color=model),size=3)+
+  theme_minimal()+
+  labs(x="Model",
+       y="RMSE",
+       title="RMSE of each model",
+       subtitle="(White wine)")+
+   theme(plot.title = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                plot.subtitle = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                axis.title = element_text(color = "blue",
+                                          face = "bold",
+                                          size = 12),
+                axis.text.x = element_text(hjust = 0.5,
+                                          vjust = 0.5,
+                                          color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                axis.text.y = element_text(color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                panel.border = element_rect(colour = "grey45",
+                                          fill=NA, size=1),
+         legend.position = "none")
+
+rsq_plot_rw<-ggplot(data=rsq_of_plots_rw)+
+  geom_point(aes(x=model,y=rsq_value,color=model),size=3)+
+  theme_minimal()+
+  labs(x="Model",
+       y="RSquared Value",
+       title="RSquared of each model",
+       subtitle="(Red wine)")+
+   theme(plot.title = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                plot.subtitle = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                axis.title = element_text(color = "blue",
+                                          face = "bold",
+                                          size = 12),
+                axis.text.x = element_text(hjust = 0.5,
+                                          vjust = 0.5,
+                                          color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                axis.text.y = element_text(color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                panel.border = element_rect(colour = "grey45",
+                                          fill=NA, size=1),
+         legend.position = "none")
+
+rsq_plot_ww<-ggplot(data=rsq_of_plots_ww)+
+  geom_point(aes(x=model,y=rsq_value,color=model),size=3)+
+  theme_minimal()+
+  labs(x="Model",
+       y="RSquared Value",
+       title="RSquare of each model",
+       subtitle="(White wine)")+
+   theme(plot.title = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                plot.subtitle = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                axis.title = element_text(color = "blue",
+                                          face = "bold",
+                                          size = 12),
+                axis.text.x = element_text(hjust = 0.5,
+                                          vjust = 0.5,
+                                          color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                axis.text.y = element_text(color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                panel.border = element_rect(colour = "grey45",
+                                          fill=NA, size=1),
+         legend.position = "none")
+
+mae_plot_rw<-ggplot(data=mae_of_plots_rw)+
+  geom_point(aes(x=model,y=mae_value,color=model),size=3)+
+  theme_minimal()+
+  labs(x="Model",
+       y="MAE",
+       title="MAE of each model",
+       subtitle="(Red wine)")+
+   theme(plot.title = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                plot.subtitle = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                axis.title = element_text(color = "blue",
+                                          face = "bold",
+                                          size = 12),
+                axis.text.x = element_text(hjust = 0.5,
+                                          vjust = 0.5,
+                                          color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                axis.text.y = element_text(color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                panel.border = element_rect(colour = "grey45",
+                                          fill=NA, size=1),
+         legend.position = "none")
+
+mae_plot_ww<-ggplot(data=mae_of_plots_ww)+
+  geom_point(aes(x=model,y=mae_value,color=model),size=3)+
+  theme_minimal()+
+  labs(x="Model",
+       y="MAE",
+       title="MAE of each model",
+       subtitle="(White wine)")+
+   theme(plot.title = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                plot.subtitle = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                axis.title = element_text(color = "blue",
+                                          face = "bold",
+                                          size = 12),
+                axis.text.x = element_text(hjust = 0.5,
+                                          vjust = 0.5,
+                                          color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                axis.text.y = element_text(color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                panel.border = element_rect(colour = "grey45",
+                                          fill=NA, size=1),
+         legend.position = "none")
+
+
+grid.arrange(rmse_plot_rw,rmse_plot_ww,nrow = 1)
+grid.arrange(mae_plot_rw,mae_plot_ww,nrow = 1)
+grid.arrange(rsq_plot_rw,rsq_plot_ww,nrow = 1)
+```
+
+```{r}
+
+red_rf_results<-ggplot(data=rf_rw_results)+
+  geom_point(aes(x=real,y=prediction,color=factor(real)))+
+  theme_minimal()+
+  labs(x="Real Quality",
+       y="Predicted Quality Values",
+       title="Real Vs Predicted Response Variable",
+       subtitle="(Red wine)")+
+   theme(plot.title = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                plot.subtitle = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                axis.title = element_text(color = "blue",
+                                          face = "bold",
+                                          size = 12),
+                axis.text.x = element_text(hjust = 0.5,
+                                          vjust = 0.5,
+                                          color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                axis.text.y = element_text(color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                panel.border = element_rect(colour = "grey45",
+                                          fill=NA, size=1),
+         legend.position = "none")
+
+
+white_rf_results<-ggplot(data=rf_ww_results)+
+  geom_point(aes(x=real,y=prediction,color=factor(real)))+
+  theme_minimal()+
+  labs(x="Real Quality",
+       y="Predicted Quality Values",
+       title="Real Vs Predicted Response Variable",
+       subtitle="(White wine)")+
+   theme(plot.title = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                plot.subtitle = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+                axis.title = element_text(color = "blue",
+                                          face = "bold",
+                                          size = 12),
+                axis.text.x = element_text(hjust = 0.5,
+                                          vjust = 0.5,
+                                          color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                axis.text.y = element_text(color = "brown2",
+                                          face = "bold",
+                                          size = 10),
+                panel.border = element_rect(colour = "grey45",
+                                          fill=NA, size=1),
+         legend.position = "none")
+
+grid.arrange(red_rf_results,white_rf_results,nrow=1)
+
+```
+
+
+```{r fig.width= 8, fig.height=8}
+
+red_rf_plot<-ggplot(data=rf_rw_results)+
+  geom_histogram(aes(x= prediction,fill=factor(real)))+
+  facet_wrap(~ factor(real),  scales="free")+
+  theme_minimal()+
+  labs(x="Predicted Quality",
+       title="Real Vs Predicted Response Variable",
+       subtitle="(Red wine)")+
+   theme(plot.title = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+          plot.subtitle = element_text(hjust = 0.5,
+                                    color = "darkgreen", 
+                                    face = "bold"),
+          axis.title = element_text(color = "blue",
+                                    face = "bold",
+                                    size = 12),
+          axis.text.x = element_text(hjust = 0.5,
+                                    vjust = 0.5,
+                                    color = "brown2",
+                                    face = "bold",
+                                    size = 10),
+          axis.text.y = element_text(color = "brown2",
+                                    face = "bold",
+                                    size = 10),
+          panel.border = element_rect(colour = "grey45",
+                                    fill=NA, size=1),
+         strip.background = element_rect(fill = "lightgrey"),
+         strip.text = element_text(color = "black", face = "bold"),
+         legend.position = "none")
+
+white_rf_plot<-ggplot(data=rf_ww_results)+
+  geom_histogram(aes(x= prediction,fill=factor(real)))+
+  facet_wrap(~ factor(real),  scales="free")+
+  theme_minimal()+
+  labs(x="Predicted Quality",
+       title="Real Vs Predicted Response Variable",
+       subtitle="(white wine)")+
+   theme(plot.title = element_text(hjust = 0.5,
+                                          color = "darkgreen", 
+                                          face = "bold"),
+          plot.subtitle = element_text(hjust = 0.5,
+                                    color = "darkgreen", 
+                                    face = "bold"),
+          axis.title = element_text(color = "blue",
+                                    face = "bold",
+                                    size = 12),
+          axis.text.x = element_text(hjust = 0.5,
+                                    vjust = 0.5,
+                                    color = "brown2",
+                                    face = "bold",
+                                    size = 10),
+          axis.text.y = element_text(color = "brown2",
+                                    face = "bold",
+                                    size = 10),
+          panel.border = element_rect(colour = "grey45",
+                                    fill=NA, size=1),
+         strip.background = element_rect(fill = "lightgrey"),
+         strip.text = element_text(color = "black", face = "bold"),
+         legend.position = "none")
+
+grid.arrange(red_rf_plot, white_rf_plot, nrow = 2)
+
+```
+
+
